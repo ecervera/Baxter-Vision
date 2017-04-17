@@ -1,1 +1,1 @@
-jupyter notebook --no-browser --ip $(hostname -A)
+jupyter notebook --no-browser --ip $(hostname -I)
