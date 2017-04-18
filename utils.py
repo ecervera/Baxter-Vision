@@ -227,8 +227,8 @@ def cluster_colors(image_bin, mask_bin, items, debug=True):
     n, _ = filtered_pixels.shape
     pixels_LAB = cv2.cvtColor(filtered_pixels[:,0:3].reshape(1,n,3),cv2.COLOR_RGB2LAB)
     pixels_LAB = pixels_LAB.reshape(n,3)
-    #clt = MiniBatchKMeans(n_clusters = n_cc)
-    clt = KMeans(n_clusters = n_cc)
+    clt = MiniBatchKMeans(n_clusters = n_cc)
+    #clt = KMeans(n_clusters = n_cc)
     clt.fit(pixels_LAB)
 
     image = cv2.cvtColor(image_bin, cv2.COLOR_RGB2LAB)
