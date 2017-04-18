@@ -1,6 +1,7 @@
 {
   "background_threshold" : 25,
   "item_folder" : "Training_items",
-  "resize": { "x": 600, "y": 600}
+  "resize": { "x": 600, "y": 600},
+  "min_match_count": 10
 }
 

@@ -1,1 +1,1 @@
-jupyter notebook --no-browser --ip $(hostname -I)
+jupyter notebook --no-browser --ip $(hostname -I | awk '{ print $NF }')

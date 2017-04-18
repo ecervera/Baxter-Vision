@@ -34,10 +34,13 @@ def item_mask(image_RGB, background_threshold):
     mask = cv2.erode( mask,kernel,iterations = 3)
     return mask
 
-def compute_sift(image_RGB, mask=None):
+def compute_sift(image_RGB, mask=None, debug=True):
     gray_image = cv2.cvtColor(image_RGB, cv2.COLOR_RGB2GRAY)
     sift = cv2.SIFT()
     kp, des = sift.detectAndCompute(gray_image, mask)
+    if debug:
+        print('%d features detected' % len(kp))
+        draw_keypoints(image_RGB,kp)
     return (kp, des)
 
 def pack_keypoint(keypoints, descriptors):
@@ -152,3 +155,150 @@ def textured_mask(image_rgb,kp):
     image = cv2.erode( image,kernel,iterations =  5)
     tx_mask = cv2.inRange(image,240,255)
     return tx_mask
+
+def match_items(image_bin, kp_bin, des_bin, items, debug=True):
+    params = read_json('parameters.json')
+    ITEM_FOLDER = params['item_folder']
+    MIN_MATCH_COUNT = params['min_match_count']
+
+    item_d = {}
+    recognised_items = []
+    image_disp = image_bin.copy()
+    mask_items = np.zeros(image_bin.shape[0:2]).astype('uint8')
+    for item in items:
+        prefix = ITEM_FOLDER + '/' + item + '/' + item
+        filename = prefix + '_top_01_sift.npy'
+        kp, des = read_features_from_file(filename)
+        kp, des = unpack_keypoint(kp, des)
+        des = des.astype('float32')
+        good = calc_matches(des, des_bin)
+        item_d[item] = {'file': filename, 'kp': kp, 'des': des, 'good': good}
+
+        filename = prefix + '_bottom_01_sift.npy'
+        kp, des = read_features_from_file(filename)
+        kp, des = unpack_keypoint(kp, des)
+        des = des.astype('float32')
+        good = calc_matches(des, des_bin)
+        if len(good) > len(item_d[item]['good']):
+            item_d[item] = {'file': filename, 'kp': kp, 'des': des, 'good': good}
+
+        if debug:
+            print('Item: "%s" Good features: %d' % (item_d[item]['file'], 
+                                                  len(item_d[item]['good'])))
+        kp = item_d[item]['kp']
+        good = item_d[item]['good']
+        if len(good) > MIN_MATCH_COUNT:
+            dst_pts = [ kp_bin[m.trainIdx] for m in good ]
+            image_disp = cv2.drawKeypoints(image_disp,dst_pts,color=(0,255,0))
+            recognised_items.append(item)
+            src_pts = np.float32([ kp[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
+            dst_pts = np.float32([ kp_bin[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
+            M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
+            x, y, w, h = read_bbox_from_file(item_d[item]['file'][:-9] + '_bbox.json')
+            pts = np.float32([ [x,y],[x,y+h-1],[x+w-1,y+h-1],[x+w-1,y] ]).reshape(-1,1,2)
+            dst = cv2.perspectiveTransform(pts,M)
+            cv2.polylines(image_disp,[np.int32(dst)],True,(0,255,0),2, cv2.CV_AA)
+            cv2.fillConvexPoly(mask_items,np.int32(dst),(255,))
+
+    if debug:
+        plt.imshow(image_disp), plt.axis('off');
+    return item_d, recognised_items, mask_items
+
+def fill_holes(image_depth, extra=2):
+    kernel = np.ones((3,3),'uint8')
+    iterations = 0
+    while sum(sum(image_depth==0)) > 0:
+        image_depth = cv2.dilate(image_depth,kernel,borderType=cv2.BORDER_REPLICATE)
+        iterations += 1
+    if iterations>0:
+        if extra>0:
+            image_depth = cv2.dilate(image_depth,kernel,iterations=extra)
+        image_depth = cv2.erode(image_depth,kernel,iterations=iterations+extra)
+    return image_depth
+
+from sklearn.cluster import KMeans, MiniBatchKMeans
+
+def cluster_colors(image_bin, mask_bin, items, debug=True):
+
+    n_cc = 20
+    image_RGBA = np.dstack((image_bin, mask_bin))
+    pixels = image_RGBA.reshape((image_RGBA.shape[0] * image_RGBA.shape[1], 4))
+    filtered_pixels = np.array(filter(lambda x:x[3]==255,pixels))
+    n, _ = filtered_pixels.shape
+    pixels_LAB = cv2.cvtColor(filtered_pixels[:,0:3].reshape(1,n,3),cv2.COLOR_RGB2LAB)
+    pixels_LAB = pixels_LAB.reshape(n,3)
+    #clt = MiniBatchKMeans(n_clusters = n_cc)
+    clt = KMeans(n_clusters = n_cc)
+    clt.fit(pixels_LAB)
+
+    image = cv2.cvtColor(image_bin, cv2.COLOR_RGB2LAB)
+    (h_bin, w_bin) = image.shape[:2]
+    pixels = image.reshape((image.shape[0] * image.shape[1], 3))
+    labels = clt.predict(pixels)
+    quant = clt.cluster_centers_.astype("uint8")[labels]
+    quant = quant.reshape((h_bin, w_bin, 3))
+    quant = cv2.cvtColor(quant, cv2.COLOR_LAB2RGB)
+    if debug:
+        plt.imshow(cv2.bitwise_and(quant,quant,mask=mask_bin)); plt.title('%d colors' % n_cc); plt.axis('off'); plt.show();
+    bin_cc = clt.cluster_centers_
+
+    bin_hist, _ = np.histogram(clt.predict(pixels_LAB),bins=range(n_cc+1))
+    if debug:
+        plt.bar(range(n_cc), bin_hist); plt.show();
+    
+    sort_index = np.argsort(bin_hist)[::-1]
+
+    params = read_json('parameters.json')
+    ITEM_FOLDER = params['item_folder']
+    positions = []
+    weights = []
+    while len(sort_index)>0:
+        obj_label = sort_index[0]
+        d_other = [np.linalg.norm(bin_cc[obj_label,1:]-bin_cc[other,1:]) for other in sort_index]
+        obj_labels = [sort_index[idx] for idx,val in enumerate(d_other) if val<20]
+        obj_hist = np.array([bin_hist[obj_l] for obj_l in obj_labels],dtype='float32')
+        obj_hist = obj_hist / np.sum(obj_hist)
+        sort_index = np.array([x for x in sort_index if x not in obj_labels])
+        mask = np.zeros((h_bin, w_bin)).astype('uint8')
+        for val_label in obj_labels:
+            mask = cv2.bitwise_or( mask, ((labels==val_label).astype('uint8') * 255).reshape((h_bin, w_bin)) )
+        mask = cv2.bitwise_and( mask, mask_bin)
+        kernel = np.ones((3,3),np.uint8)
+        mask = cv2.erode(mask,kernel,iterations = 3)
+        mask = cv2.dilate(mask,kernel,iterations = 3)
+        #cnt, _ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+        cnt, _ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
+        cnt = sorted(cnt, key=lambda x:cv2.contourArea(x), reverse=True)
+        best_cnt = [c for c in cnt if cv2.contourArea(c)>500]
+        positions.append(best_cnt)
+
+        best_item = []
+        views = ['top_01','top-side_01','top-side_02','bottom_01','bottom-side_01','bottom-side_02']
+        for item in items:
+            for view in views:
+                try:
+                    filename = ITEM_FOLDER + '/' + item + '/' + item + '_' + view + '_dc.json'
+                    dc = read_json(filename)
+                    hist = dc['hist']
+                    obj_cc = dc['cluster_centers']
+                    sum_h = 0
+                    for i in range(5):
+                        d_bin_obj = [np.linalg.norm(obj_cc[i]-bin_cc[obj_l,:]) for obj_l in obj_labels]
+                        index_min = np.argmin(d_bin_obj)
+                        if d_bin_obj[index_min] < 25:
+                            sum_h += hist[i] * obj_hist[index_min]
+                            # hist[i] is the number of pixels in the image -> count only in rectangle?
+                    #if sum_h > 0.05:
+                    if sum_h > 0.1:
+                        best_item.append((sum_h,item,view))
+                except IOError:
+                    pass
+        best_item_one = []
+        for it in items:
+            try:
+                w = max([bi[0] for bi in best_item if bi[1]==it])
+                best_item_one.append((w,it))
+            except ValueError:
+                pass
+        weights.append(best_item_one)
+    return positions, weights
