@@ -218,9 +218,9 @@ def fill_holes(image_depth, extra=2):
 
 from sklearn.cluster import KMeans, MiniBatchKMeans
 
-def cluster_colors(image_bin, mask_bin, items, debug=True):
+def cluster_colors(image_bin, mask_bin, items, n_cc=20, debug=True):
 
-    n_cc = 20
+    #n_cc = 20
     image_RGBA = np.dstack((image_bin, mask_bin))
     pixels = image_RGBA.reshape((image_RGBA.shape[0] * image_RGBA.shape[1], 4))
     filtered_pixels = np.array(filter(lambda x:x[3]==255,pixels))
@@ -254,8 +254,10 @@ def cluster_colors(image_bin, mask_bin, items, debug=True):
     weights = []
     while len(sort_index)>0:
         obj_label = sort_index[0]
+        # distance in the ab components of the Lab color space
         d_other = [np.linalg.norm(bin_cc[obj_label,1:]-bin_cc[other,1:]) for other in sort_index]
-        obj_labels = [sort_index[idx] for idx,val in enumerate(d_other) if val<20]
+        # group "similar" colors with distance less than a threshold (20?)
+        obj_labels = [sort_index[idx] for idx,val in enumerate(d_other) if val<10]
         obj_hist = np.array([bin_hist[obj_l] for obj_l in obj_labels],dtype='float32')
         obj_hist = obj_hist / np.sum(obj_hist)
         sort_index = np.array([x for x in sort_index if x not in obj_labels])
@@ -269,6 +271,7 @@ def cluster_colors(image_bin, mask_bin, items, debug=True):
         #cnt, _ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
         cnt, _ = cv2.findContours(mask,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
         cnt = sorted(cnt, key=lambda x:cv2.contourArea(x), reverse=True)
+        # select only contours with a minimum area (500?)
         best_cnt = [c for c in cnt if cv2.contourArea(c)>500]
         positions.append(best_cnt)
 
@@ -283,12 +286,15 @@ def cluster_colors(image_bin, mask_bin, items, debug=True):
                     obj_cc = dc['cluster_centers']
                     sum_h = 0
                     for i in range(5):
+                        # distance in the Lab color space
                         d_bin_obj = [np.linalg.norm(obj_cc[i]-bin_cc[obj_l,:]) for obj_l in obj_labels]
                         index_min = np.argmin(d_bin_obj)
+                        # distance threshold between object and bin colors (25?)
                         if d_bin_obj[index_min] < 25:
                             sum_h += hist[i] * obj_hist[index_min]
                             # hist[i] is the number of pixels in the image -> count only in rectangle?
                     #if sum_h > 0.05:
+                    # weight threshold (0.05?)
                     if sum_h > 0.1:
                         best_item.append((sum_h,item,view))
                 except IOError:
@@ -302,3 +308,17 @@ def cluster_colors(image_bin, mask_bin, items, debug=True):
                 pass
         weights.append(best_item_one)
     return positions, weights
+
+def calc_EMD2(h_obj,cc_obj,h_ref,cc_ref):
+    sig_obj = np.concatenate((np.reshape(np.array(h_obj),(len(h_obj),1)),
+                              np.array(cc_obj)[:,0:3]),1)
+    a64 = cv2.cv.fromarray(sig_obj)
+    a32 = cv2.cv.CreateMat(a64.rows, a64.cols, cv2.cv.CV_32FC1)
+    cv2.cv.Convert(a64, a32)
+    sig_ref = np.concatenate((np.reshape(np.array(h_ref),(len(h_ref),1)),
+                              np.array(cc_ref)[:,0:3]),1)
+    b64 = cv2.cv.fromarray(sig_ref)
+    b32 = cv2.cv.CreateMat(b64.rows, b64.cols, cv2.cv.CV_32FC1)
+    cv2.cv.Convert(b64, b32)
+    return cv2.cv.CalcEMD2(a32,b32,cv2.cv.CV_DIST_L2)
+
