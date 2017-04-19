@@ -110,7 +110,8 @@ def compute_colors(image_RGB, mask):
     #clt = MiniBatchKMeans(n_clusters = 5)
     clt.fit(pixels_LAB)
     hist = centroid_histogram(clt)
-    hist, cc = zip(*sorted(zip(hist, clt.cluster_centers_),reverse=True))
+    #print((hist,clt.cluster_centers_))
+    hist, dummy, cc = zip(*sorted(zip(hist, range(len(hist)), clt.cluster_centers_),reverse=True))
     return hist, cc
 
 def plot_colors(hist, cc):
