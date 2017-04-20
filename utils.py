@@ -69,6 +69,10 @@ def read_json(filename):
         data = json.load(infile)
     return data
 
+def write_json(filename, data):
+    with open(filename, 'w') as outfile:
+        json.dump(data, outfile)
+        
 def read_bbox_from_file(filename):
     bbox = read_json(filename)
     x = bbox['x']
@@ -191,7 +195,6 @@ def match_items(image_bin, kp_bin, des_bin, items, debug=True):
         if len(good) > MIN_MATCH_COUNT:
             dst_pts = [ kp_bin[m.trainIdx] for m in good ]
             image_disp = cv2.drawKeypoints(image_disp,dst_pts,color=(0,255,0))
-            recognised_items.append(item)
             src_pts = np.float32([ kp[m.queryIdx].pt for m in good ]).reshape(-1,1,2)
             dst_pts = np.float32([ kp_bin[m.trainIdx].pt for m in good ]).reshape(-1,1,2)
             M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
@@ -200,9 +203,14 @@ def match_items(image_bin, kp_bin, des_bin, items, debug=True):
             dst = cv2.perspectiveTransform(pts,M)
             cv2.polylines(image_disp,[np.int32(dst)],True,(0,255,0),2, cv2.CV_AA)
             cv2.fillConvexPoly(mask_items,np.int32(dst),(255,))
+            recognised_items.append( (item, np.int32(dst)) )
 
     if debug:
         plt.imshow(image_disp), plt.axis('off');
+    
+    kernel = np.ones((3,3),np.uint8)
+    mask_items = 255 - cv2.dilate(mask_items,kernel,iterations = 5)
+
     return item_d, recognised_items, mask_items
 
 def fill_holes(image_depth, extra=2):
