@@ -2,8 +2,20 @@ import cv2, math, numpy as np
 
 def contourDist(ca,cb):
     dmin = float('inf')
-    for pa in ca:
-        for pb in cb:
+    if len(ca) > 100:
+        step_a = 10
+    elif len(ca) > 10:
+        step_a = 4
+    else:
+        step_a = 1
+    if len(cb) > 100:
+        step_b = 10
+    elif len(cb) > 10:
+        step_b = 4
+    else:
+        step_b = 1
+    for pa in ca[::step_a]:
+        for pb in cb[::step_b]:
             d = np.sum((pa - pb) * (pa - pb))
             if d < dmin:
                 dmin = d
