@@ -74,14 +74,17 @@ def match_items(image_bin, kp_bin, des_bin, items, debug=True):
         good = calc_matches(des, des_bin)
         item_d[item] = {'file': filename, 'kp': kp, 'des': des, 'good': good}
 
-        filename = prefix + '_bottom_01_sift.npy'
-        kp, des = read_features_from_file(filename)
-        kp, des = unpack_keypoint(kp, des)
-        des = des.astype('float32')
-        good = calc_matches(des, des_bin)
-        if len(good) > len(item_d[item]['good']):
-            item_d[item] = {'file': filename, 'kp': kp, 'des': des, 'good': good}
-
+        try:
+            filename = prefix + '_bottom_01_sift.npy'
+            kp, des = read_features_from_file(filename)
+            kp, des = unpack_keypoint(kp, des)
+            des = des.astype('float32')
+            good = calc_matches(des, des_bin)
+            if len(good) > len(item_d[item]['good']):
+                item_d[item] = {'file': filename, 'kp': kp, 'des': des, 'good': good}
+        except OSError:
+            print('OSError: file not found: %s' % filename)
+        
         if debug:
             print('Item: "%s" Good features: %d' % (item_d[item]['file'], 
                                                   len(item_d[item]['good'])))
