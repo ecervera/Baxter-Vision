@@ -47,7 +47,7 @@ def plot_colors(hist, cc):
 
 from utils_io import read_json
 
-def cluster_colors(image_bin, mask_bin, items, n_cc=20, debug=True):
+def cluster_colors(image_bin, mask_bin, items, n_cc=20, debug=False):
 
     image_RGBA = np.dstack((image_bin, mask_bin))
     pixels = image_RGBA.reshape((image_RGBA.shape[0] * image_RGBA.shape[1], 4))
@@ -150,3 +150,39 @@ def calc_EMD2(h_obj,cc_obj,h_ref,cc_ref):
     cv2.cv.Convert(b64, b32)
     return cv2.cv.CalcEMD2(a32,b32,cv2.cv.CV_DIST_L2)
 
+from utils_contour import contourClustering
+
+def find_items_by_color(image_bin, image_mask, items, n_cc=20):
+    positions, weights = cluster_colors(image_bin, image_mask, items, n_cc)
+    
+    pos_ok = [(p,w[0][1]) for p,w in zip(positions, weights) if len(w)==1]
+    pos_unkw = [(p,w) for p,w in zip(positions, weights) if len(w)>1]
+    
+    contours = {}
+    for item in items:
+        contours[item] = []
+        it_pos = [p for p,it in pos_ok if it==item]
+        for cnt in it_pos:
+            contours[item] += cnt
+
+    clusters = {}
+    threshold = 30
+    for item in items:
+        clusters[item] = contourClustering(contours[item], threshold)
+        
+    recognised_items = [ item for item in clusters.keys() if clusters[item] ]
+
+    bboxes = []
+    for item in recognised_items:
+        area = 0
+        bb = None
+        for cl in clusters[item]:
+            cc = [c for idx, c in enumerate(contours[item]) if idx in cl]
+            # TODO: oriented rectangle
+            x,y,w,h = cv2.boundingRect(np.vstack(tuple(cc)))
+            if area < w*h:
+                area = w*h
+                bb = (x,y,w,h)
+        bboxes.append(bb)
+        
+    return recognised_items, bboxes
